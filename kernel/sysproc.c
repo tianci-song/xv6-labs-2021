@@ -81,6 +81,25 @@ int
 sys_pgaccess(void)
 {
   // lab pgtbl: your code here.
+	uint64 va;
+	int num_pages;
+	if(argaddr(0, &va) < 0) return -1;
+	if(argint(1, &num_pages) < 0) return -1;
+
+	uint32 mask = 0;
+	// search the unaccessed page and mark it
+	for(int i=0; i<num_pages; ++i){
+		pte_t* pte = walk(myproc()->pagetable, va, 0);
+		if ((pte[i] & PTE_A)) {	// check the access bit
+			mask |= (1 << i);
+			pte[i] ^= (PTE_A);	// clear the PTE_A flag after pgaccess()
+		}
+	}
+	uint64 dstva;
+	if(argaddr(2, &dstva) < 0) return -1;
+	// transfer the data from kernel to user
+	copyout(myproc()->pagetable, dstva, (char*)&mask, 4);
+
   return 0;
 }
 #endif
