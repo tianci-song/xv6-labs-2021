@@ -66,7 +66,7 @@ usertrap(void)
 
     syscall();
   } else if((which_dev = devintr()) != 0){
-    // ok
+   	// ok
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
@@ -77,8 +77,19 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
-    yield();
+  if(which_dev == 2) {
+		// if sigalarm() is invoked and the last handler call has finished and the current time has reahced the interval
+		if (p->interval > 0 && !p->alarm_ongoing && p->time_passed > p->interval) {
+			if (p->alarm_trapframe == 0) {
+				p->alarm_trapframe = (struct trapframe*)kalloc();
+			}
+			*p->alarm_trapframe = *p->trapframe;	// save the content (not pointer) of the trapframe
+			p->alarm_ongoing = 1;
+			p->time_passed = 0;
+			p->trapframe->epc =(uint64)p->handler;	// calling the user space handler function by trapping
+		}
+		p->time_passed++;
+	}
 
   usertrapret();
 }

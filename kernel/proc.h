@@ -105,4 +105,14 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+	// alarmtest
+	int interval;								// ticks of CPU time
+	void (*handler)();					// handler function
+	int time_passed;						// time passed since last call
+	// save the trapframe, since epc has been set to the handler's address, and besides,
+	// sigreturn() will also change the trapframe, so it's necessary to save the original trapframe.
+	// And it should be noted that the saving should be a deep copy (allocating memory and copy).
+	struct trapframe* alarm_trapframe;	
+	int alarm_ongoing;					// prevent calling handler again before handler finished
 };

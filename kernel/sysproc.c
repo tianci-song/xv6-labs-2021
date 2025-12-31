@@ -70,6 +70,7 @@ sys_sleep(void)
     sleep(&ticks, &tickslock);
   }
   release(&tickslock);
+	backtrace();
   return 0;
 }
 
@@ -94,4 +95,26 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+uint64
+sys_sigalarm(void)
+{
+	int interval;
+	argint(0, &interval);
+	myproc()->interval = interval;
+	uint64 addr;
+	argaddr(1, &addr);
+	myproc()->handler = (void(*)())addr;
+
+	return 0;
+}
+
+uint64
+sys_sigreturn(void)
+{
+	struct proc* p = myproc();
+	*p->trapframe = *p->alarm_trapframe;	// restore the original trapframe, so can resume where the code was interruptted
+	p->alarm_ongoing = 0;	// clear the flag so handler can be invoked again
+	return 0;
 }
