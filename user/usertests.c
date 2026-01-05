@@ -235,7 +235,7 @@ copyinstr3(char *s)
 // See if the kernel refuses to read/write user memory that the
 // application doesn't have anymore, because it returned it.
 void
-rwsbrk()
+rwsbrk(char*)
 {
   int fd, n;
   
@@ -911,7 +911,8 @@ reparent(char *s)
         printf("%s: wait wrong pid\n", s);
         exit(1);
       }
-    } else {
+    } 
+		else {
       int pid2 = fork();
       if(pid2 < 0){
         kill(master_pid);
@@ -2245,11 +2246,12 @@ MAXVAplus(char *s)
       printf("%s: oops wrote %x\n", s, a);
       exit(1);
     }
-    int xstatus;
-    wait(&xstatus);
-    if(xstatus != -1)  // did kernel kill child?
-      exit(1);
-  }
+		int xstatus;
+		wait(&xstatus);
+		if (xstatus != -1) {	// check if kill the child
+			exit(1);
+		}
+	}
 }
 
 // if we run the system out of memory, does it clean up the last

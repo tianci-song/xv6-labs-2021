@@ -11,3 +11,4 @@
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
 #define FSSIZE       1000  // size of file system in blocks
 #define MAXPATH      128   // maximum file path name
+#define NPG						(1 << 15)		// 2^27 va / 4K PGSIZE = 2^15 PAGES

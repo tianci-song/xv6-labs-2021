@@ -11,6 +11,9 @@ uint ticks;
 
 extern char trampoline[], uservec[], userret[];
 
+extern int ref_count[];
+extern int copyonwrite(pagetable_t, uint64);
+
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
 
@@ -65,9 +68,18 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if((which_dev = devintr()) != 0){
+  } 
+	else if (r_scause() == 15) { // store page fault
+		if (copyonwrite(p->pagetable, r_stval()) == -1) {
+			printf("usertrap(): store page fault pid=%d\n", p->pid);
+			printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+			p->killed = 1;
+		}
+	}
+	else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  }
+	else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;

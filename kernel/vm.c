@@ -15,6 +15,9 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+extern struct spinlock ref_count_lk;
+extern int ref_count[];	// reference count of the page
+
 // Make a direct-map page table for the kernel.
 pagetable_t
 kvmmake(void)
@@ -149,7 +152,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
     if(*pte & PTE_V)
-      panic("mappages: remap");
+			panic("mappages: remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;
@@ -178,10 +181,10 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
-    if(do_free){
-      uint64 pa = PTE2PA(*pte);
-      kfree((void*)pa);
-    }
+    if(do_free){ 
+			uint64 pa = PTE2PA(*pte);
+			kfree((void*)pa); 
+		}
     *pte = 0;
   }
 }
@@ -303,7 +306,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -311,14 +313,17 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+
+		if (*pte & PTE_W) { *pte ^= PTE_W; }	// clear PTE_W, to trigger page fault
+		if ((*pte & PTE_COW) == 0) { *pte ^= PTE_COW; }	// now it's a COW page since forked (shared)
+
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
-      goto err;
-    }
+
+		// map to the parents' physical address
+    if(mappages(new, i, PGSIZE, pa, flags) != 0) { goto err; }
+		acquire(&ref_count_lk);
+		ref_count[(pa-KERNBASE) / PGSIZE]++;
+		release(&ref_count_lk);
   }
   return 0;
 
@@ -347,6 +352,11 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
+
+	if (copyonwrite(pagetable, dstva) == -1) {
+		printf("copyout(): copyonwrite() error!\n");
+		return -1;
+	}
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
@@ -431,4 +441,44 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+int copyonwrite(pagetable_t pagetable, uint64 va) {
+	if (va >= MAXVA) { return -1; }
+
+	uint64* pte;
+	uint64 old_pa;
+	char* new_pa;
+	uint flags;
+
+	pte = walk(pagetable, va, 1);
+	// check if the page is tagged copy on write
+	if ((*pte & PTE_COW) == 0) { 
+		return 0; 
+	}	
+	else { 	// clear the COW flag
+		*pte ^= PTE_COW; 
+	}
+	if ((*pte & PTE_W) == 0) { *pte ^= PTE_W; } // restore PTE_W
+	// get the old physical address
+	old_pa = walkaddr(pagetable, va);
+	// then, allocate a new page
+	if ((new_pa = (char*)kalloc()) == 0) { return -1; }
+	/* Page-aligned work should be done in the following steps, for example, */
+	/* if the st_val=0x1500, then should copy va ranging from 0x1000 to 0x2000 */
+	/* and in uvmunmap and mappages, alignment is also needed, otherwise, if */
+	/* copy from 0x1500 to 0x2500, then mappages will map two pages, 0x1000~0x2000 */
+	/* and 0x2000~0x3000 */
+	old_pa = PGROUNDDOWN(old_pa);
+	memmove(new_pa, (char*)old_pa, PGSIZE); // and then, copy the content
+
+	// finally, install the new page into the page table
+	flags = PTE_FLAGS(*pte);
+	uvmunmap(pagetable, PGROUNDDOWN(va), 1, 1);
+	if (mappages(pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)new_pa, flags) != 0) {
+		uvmunmap(pagetable, 0, va/PGSIZE, 1);	// unmap and free the whole old pages
+		kfree(new_pa);  // free the new page
+		return -1;
+	}
+	return 0;
 }
