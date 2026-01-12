@@ -102,7 +102,32 @@ e1000_transmit(struct mbuf *m)
   // the TX descriptor ring so that the e1000 sends it. Stash
   // a pointer so that it can be freed after sending.
   //
+
+	// first, determine which index does this frame locate (using regs[E1000_TDT])
+	uint32 index = regs[E1000_TDT];
+
+	struct tx_desc* desc = &tx_ring[index];
+
+	// then, check ring is overflowing
+	if ((desc->status & E1000_TXD_STAT_DD) == 0) {
+		return -1;	// E1000 hasn't finished the previous transmission request
+	}
+	else {	// otherwise, free the last mbuf that was transmitted from that descriptor
+		if (tx_mbufs[index]) { mbuffree(tx_mbufs[index]); }
+	}
+	// program the packet into the desc ring
+	desc->addr = (uint64)m->head;
+	desc->length = (uint16)m->len;
+	desc->cmd = E1000_TXD_CMD_RS | E1000_TXD_CMD_EOP;
+
+	acquire(&e1000_lock);
+	// stash away the pointer to new mbuf
+	tx_mbufs[index] = m;
   
+	// finally, update the available position of the ring
+	regs[E1000_TDT] = (regs[E1000_TDT] + 1) % TX_RING_SIZE;
+	release(&e1000_lock);
+
   return 0;
 }
 
@@ -115,6 +140,37 @@ e1000_recv(void)
   // Check for packets that have arrived from the e1000
   // Create and deliver an mbuf for each packet (using net_rx()).
   //
+
+	while (1) {
+		// first, get the next waiting received packet's index
+		uint32 index = regs[E1000_RDT];
+		index = (index + 1) % RX_RING_SIZE;
+
+		// then, check if new packet is available (hardware marks done, set desc's status)
+		struct rx_desc* desc = &rx_ring[index];
+		if ((desc->status & E1000_RXD_STAT_DD) == 0) {
+			return;
+		}
+		// hardware writes packet data into desc's address (which is also mbuf's data address) 
+		// and now we need to just update the len of mbuf
+		struct mbuf* m = rx_mbufs[index];
+		m->len = (unsigned int)desc->length;
+
+		// detach the old mbuf from the desc ring and deliver it to network stack
+		net_rx(m);
+
+		// since, the old mbuf will be freed in net_rx(), we need to create and 
+		// attach a new mbuf for desc ring so that the new packet can be received
+		m = mbufalloc(0);
+		desc->addr = (uint64)m->head;
+		desc->status = 0;
+
+		// finally, update the regs[E1000_RDT]
+		acquire(&e1000_lock);
+		rx_mbufs[index] = m;
+		regs[E1000_RDT] = index;
+		release(&e1000_lock);
+	}
 }
 
 void
@@ -124,6 +180,6 @@ e1000_intr(void)
   // without this the e1000 won't raise any
   // further interrupts.
   regs[E1000_ICR] = 0xffffffff;
-
+	
   e1000_recv();
 }
