@@ -5,8 +5,7 @@ struct buf {
   uint blockno;
   struct sleeplock lock;
   uint refcnt;
-  struct buf *prev; // LRU cache list
-  struct buf *next;
+	uint ticks;	// record which buf is the least recently used
   uchar data[BSIZE];
 };
 
